@@ -1,0 +1,9 @@
+ccxt
+pandas
+numpy
+pandas-ta
+twilio
+python-dotenv
+requests
+schedule
+pytz
