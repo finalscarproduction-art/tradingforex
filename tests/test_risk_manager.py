@@ -112,6 +112,55 @@ def test_size_factor_50pct_halves_risk_pct_field():
 
 
 # ── invalidation message ────────────────────────────────────────────────────
+def test_short_tp_buffer_does_not_overshoot_entry():
+    """
+    Reproduces today's USD/CHF SHORT bug: an S/R level within 5 pips of
+    entry, when buffered with `+5*pip`, used to push TP ABOVE entry.
+    The clamp added in _adjust_tp must fall back to the base TP instead.
+    """
+    sr_levels = [
+        # Support ~2 pips below entry, 3 touches → would have produced
+        # 0.77735 + 0.0005 = 0.77785 (above entry 0.77759) before the fix
+        {"price": 0.77735, "type": "support", "touches": 3},
+    ]
+    df_15m = pd.DataFrame([{
+        "open": 0.77759, "high": 0.77770, "low": 0.77750, "close": 0.77758,
+    }])
+    res = calculate(
+        entry=0.77759, direction="SHORT",
+        atr_15m=0.0010, atr_4h=0.0050,
+        df_15m=df_15m, sr_levels=sr_levels, pair="USD/CHF",
+        matched_ob={"low": 0.77750, "high": 0.77800, "direction": "bearish"},
+    )
+    assert res["valid"] is True
+    # All TPs must remain BELOW entry
+    assert res["tp1"] < res["entry"], f"TP1 {res['tp1']} >= entry {res['entry']}"
+    assert res["tp2"] < res["entry"]
+    assert res["tp3"] < res["entry"]
+
+
+def test_long_tp_buffer_does_not_undershoot_entry():
+    """Mirror — LONG TP must never end up below entry due to buffer subtraction."""
+    sr_levels = [
+        # Resistance ~2 pips above entry — would have produced
+        # 1.09020 - 0.0005 = 1.08970 (below entry 1.09000) before the fix
+        {"price": 1.09020, "type": "resistance", "touches": 3},
+    ]
+    df_15m = pd.DataFrame([{
+        "open": 1.09000, "high": 1.09010, "low": 1.08990, "close": 1.09005,
+    }])
+    res = calculate(
+        entry=1.09000, direction="LONG",
+        atr_15m=0.0010, atr_4h=0.0050,
+        df_15m=df_15m, sr_levels=sr_levels, pair="EUR/USD",
+        matched_ob={"low": 1.08980, "high": 1.09000, "direction": "bullish"},
+    )
+    assert res["valid"] is True
+    assert res["tp1"] > res["entry"]
+    assert res["tp2"] > res["entry"]
+    assert res["tp3"] > res["entry"]
+
+
 def test_invalidation_message_contains_sl_price():
     res = calculate(
         entry=1.0900, direction="LONG",

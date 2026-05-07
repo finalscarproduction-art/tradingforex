@@ -115,6 +115,13 @@ def calculate(entry: float, direction: str, atr_15m: float, atr_4h: float,
 
 
 def _adjust_tp(tp, entry, direction, sr_levels, pip, min_touches=2, prefer_extreme=False):
+    """
+    Snap TP to a buffered S/R level if one sits between entry and the base TP.
+
+    Buffer protection (added 2026-05-06): the +/- 5×pip buffer can overshoot
+    entry when the level sits within 5 pips of entry. We clamp the result so
+    it can never cross entry — keeping LONG TP > entry and SHORT TP < entry.
+    """
     if not sr_levels: return tp
     if direction == "LONG":
         between = [l for l in sr_levels
@@ -124,7 +131,11 @@ def _adjust_tp(tp, entry, direction, sr_levels, pip, min_touches=2, prefer_extre
         if between:
             target = max(between, key=lambda x: x["price"]) if prefer_extreme else \
                      min(between, key=lambda x: x["price"])
-            return target["price"] - 5 * pip
+            adjusted = target["price"] - 5 * pip
+            # Clamp — buffered TP must stay above entry (LONG profit side)
+            if adjusted <= entry:
+                return tp                    # fall back to base TP
+            return adjusted
     else:
         between = [l for l in sr_levels
                    if l.get("type") in ("support", "round")
@@ -133,5 +144,9 @@ def _adjust_tp(tp, entry, direction, sr_levels, pip, min_touches=2, prefer_extre
         if between:
             target = min(between, key=lambda x: x["price"]) if prefer_extreme else \
                      max(between, key=lambda x: x["price"])
-            return target["price"] + 5 * pip
+            adjusted = target["price"] + 5 * pip
+            # Clamp — buffered TP must stay below entry (SHORT profit side)
+            if adjusted >= entry:
+                return tp                    # fall back to base TP
+            return adjusted
     return tp

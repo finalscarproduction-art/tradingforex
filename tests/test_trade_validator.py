@@ -133,3 +133,112 @@ def test_distinct_tps_with_proper_spacing_pass(setup_candidate, bullish_bias):
     result = validate(setup_candidate, bullish_bias, [], [])
     assert is_approved(result)
     assert "tp_distinct" in result.reasons_passed
+
+
+# ── TP direction-geometry gate (Issue A defensive fix) ──────────────────────
+def test_short_with_tp1_above_entry_rejected(setup_candidate, bullish_bias):
+    """Reproduces today's USD/CHF SHORT bug: TP1 above entry must be rejected."""
+    bear_bias = HTFBias(symbol="USD/CHF", direction="BEAR")
+    s = SetupCandidate(
+        setup_id="USDCHF_TEST", symbol="USD/CHF", direction="SHORT",
+        entry=0.77759, sl=0.77879,
+        tp1=0.777857,                # ← TP above entry — BUG
+        tp2=0.77600, tp3=0.77500,
+        confidence="HIGH", atr_4h=0.0030,
+        timestamp=setup_candidate.timestamp,
+    )
+    result = validate(s, bear_bias, [], [])
+    assert not is_approved(result)
+    assert result.code == RejectionCode.INVALID_INPUT
+    # Message says "TP1 (X) must be BELOW entry" for SHORT
+    assert "below entry" in result.message.lower()
+    assert "tp1" in result.message.lower()
+
+
+def test_short_with_tp2_above_entry_rejected(setup_candidate, bullish_bias):
+    bear_bias = HTFBias(symbol="USD/CHF", direction="BEAR")
+    s = SetupCandidate(
+        setup_id="USDCHF_TEST", symbol="USD/CHF", direction="SHORT",
+        entry=0.77759, sl=0.77879,
+        tp1=0.77600, tp2=0.78000, tp3=0.77400,   # TP2 above entry
+        confidence="HIGH", atr_4h=0.0030,
+        timestamp=setup_candidate.timestamp,
+    )
+    result = validate(s, bear_bias, [], [])
+    assert not is_approved(result)
+    assert result.code == RejectionCode.INVALID_INPUT
+
+
+def test_long_with_tp1_below_entry_rejected(setup_candidate, bullish_bias):
+    """Mirror: LONG with TP below entry must be rejected."""
+    s = SetupCandidate(
+        setup_id="EURUSD_TEST", symbol="USD/CHF", direction="LONG",
+        entry=1.0900, sl=1.0880,
+        tp1=1.0850,                  # ← TP below entry — bug
+        tp2=1.0930, tp3=1.0950,
+        confidence="HIGH", atr_4h=0.0030,
+        timestamp=setup_candidate.timestamp,
+    )
+    result = validate(s, bullish_bias, [], [])
+    assert not is_approved(result)
+    assert result.code == RejectionCode.INVALID_INPUT
+    # LONG message: "TP1 (X) must be ABOVE entry"
+    assert "above entry" in result.message.lower()
+    assert "tp1" in result.message.lower()
+
+
+def test_long_with_tp3_below_entry_rejected(setup_candidate, bullish_bias):
+    s = SetupCandidate(
+        setup_id="EURUSD_TEST", symbol="USD/CHF", direction="LONG",
+        entry=1.0900, sl=1.0880,
+        tp1=1.0930, tp2=1.0940, tp3=1.0890,   # TP3 below entry
+        confidence="HIGH", atr_4h=0.0030,
+        timestamp=setup_candidate.timestamp,
+    )
+    result = validate(s, bullish_bias, [], [])
+    assert not is_approved(result)
+    assert result.code == RejectionCode.INVALID_INPUT
+
+
+# ── Regression: real-world production bug 2026-05-07 ───────────────────────
+def test_real_world_short_with_tp_above_entry_blocked(setup_candidate):
+    """Regression test for 2026-05-07 USD/CHF SHORT bug.
+
+    On 2026-05-07 09:22 UTC the engine generated a SHORT signal with
+    tp1 ABOVE entry due to S/R buffer overshoot in _adjust_tp.
+    The validator's input-sanity gate must catch this.
+    """
+    bear = HTFBias(symbol="USD/CHF", direction="BEAR")
+    s = SetupCandidate(
+        setup_id="USDCHF_REGRESSION_20260507",
+        symbol="USD/CHF", direction="SHORT",
+        entry=0.77759, sl=0.77879,
+        tp1=0.777857,        # bug: above entry on a SHORT
+        tp2=0.77, tp3=0.769,
+        confidence="HIGH", atr_4h=0.0030,
+        timestamp=setup_candidate.timestamp,
+    )
+    result = validate(s, bear, [], [])
+    assert not is_approved(result)                      # rejected
+    assert result.code == RejectionCode.INVALID_INPUT
+    assert "TP1" in result.message
+    assert "BELOW entry" in result.message
+
+
+# ── RR threshold equality (Issue B fix) ─────────────────────────────────────
+def test_rr_exactly_equal_to_min_passes(setup_candidate, bullish_bias):
+    """A signal whose RR1 lands exactly at the 1.5 floor must PASS, not be
+    rejected by float-noise from a strict-less-than comparison."""
+    # entry=0.789, sl=0.787 → risk=0.002. To get rr=1.5 exactly: tp1 = entry+0.003
+    s = SetupCandidate(
+        setup_id="EURUSD_BOUNDARY", symbol="USD/CHF", direction="LONG",
+        entry=0.78900, sl=0.78700,
+        tp1=0.79200,                          # exactly 1.5R
+        tp2=0.79400, tp3=0.79600,
+        confidence="HIGH", atr_4h=0.0030,
+        timestamp=setup_candidate.timestamp,
+    )
+    result = validate(s, bullish_bias, [], [])
+    assert is_approved(result), \
+        f"Expected approval at RR=1.5, got {result.code if not is_approved(result) else 'OK'}"
+    assert result.rr1 == 1.5

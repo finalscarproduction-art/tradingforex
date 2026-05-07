@@ -131,6 +131,21 @@ def _check_input_sanity(s: SetupCandidate) -> Optional[RejectionReason]:
         return _reject(RejectionCode.INVALID_INPUT, s,
                        "SHORT: SL must be above entry",
                        {"entry": s.entry, "sl": s.sl})
+
+    # ── TP geometry — every TP must be on the profit side of entry ───────
+    for label, tp in (("TP1", s.tp1), ("TP2", s.tp2), ("TP3", s.tp3)):
+        if s.direction == "LONG" and tp <= s.entry:
+            return _reject(
+                RejectionCode.INVALID_INPUT, s,
+                f"LONG: {label} ({tp}) must be ABOVE entry ({s.entry})",
+                {"direction": "LONG", "entry": s.entry, label.lower(): tp},
+            )
+        if s.direction == "SHORT" and tp >= s.entry:
+            return _reject(
+                RejectionCode.INVALID_INPUT, s,
+                f"SHORT: {label} ({tp}) must be BELOW entry ({s.entry})",
+                {"direction": "SHORT", "entry": s.entry, label.lower(): tp},
+            )
     return None
 
 
@@ -152,7 +167,9 @@ def _check_rr(s: SetupCandidate) -> Optional[RejectionReason]:
         return _reject(RejectionCode.RR_TOO_LOW, s,
                        "Risk distance is zero", {"entry": s.entry, "sl": s.sl})
     rr1 = reward / risk
-    if rr1 < MIN_RR_TP1:
+    # Tolerate exact-threshold equality (e.g. RR=1.500000…). Float noise like
+    # 1.4999999 is also accepted; anything materially below is still rejected.
+    if rr1 < MIN_RR_TP1 - 1e-6:
         return _reject(
             RejectionCode.RR_TOO_LOW, s,
             f"R:R on TP1 = 1:{rr1:.2f} < required 1:{MIN_RR_TP1}",
