@@ -22,3 +22,5 @@ blocked_signals.json
 cooldown_state.json
 performance.json
 MT5_SignalBot.ex5
+
+node_modules/
